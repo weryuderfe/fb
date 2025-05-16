@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urljoin
 
 # Page configuration
 st.set_page_config(
@@ -53,6 +53,12 @@ st.markdown("""
     .step {
         margin-bottom: 10px;
     }
+    .content-viewer {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        margin-top: 20px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -69,6 +75,25 @@ def parse_cookies(cookie_string):
             name, value = part.split('=', 1)
             cookies[name] = value
     return cookies
+
+def fetch_facebook_content(cookies, url):
+    """Fetch Facebook content using the provided cookies"""
+    headers = {
+        'User-Agent': cookies.get('useragent', 'Mozilla/5.0'),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+    }
+    
+    session = requests.Session()
+    for name, value in cookies.items():
+        session.cookies.set(name, value)
+    
+    try:
+        response = session.get(url, headers=headers)
+        return response.text if response.status_code == 200 else None
+    except Exception as e:
+        st.error(f"Error fetching content: {str(e)}")
+        return None
 
 def check_login_status(cookies):
     """Check if the login is successful using the cookies"""
@@ -142,30 +167,32 @@ def main():
         
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # Display Facebook iframe if logged in
+    # Display Facebook content if logged in
     if st.session_state.get('logged_in', False):
-        st.markdown("### Facebook Mini Browser")
-        st.info("Your Facebook session is now active in the mini browser below.")
+        st.markdown("### Facebook Navigation")
         
-        html_content = f"""
-        <iframe 
-            src="https://www.facebook.com" 
-            width="100%" 
-            height="600" 
-            sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
-            referrerpolicy="no-referrer"
-        ></iframe>
-        """
+        # Navigation options
+        options = {
+            "News Feed": "https://www.facebook.com",
+            "Profile": "https://www.facebook.com/me",
+            "Friends": "https://www.facebook.com/friends",
+            "Messages": "https://www.facebook.com/messages",
+            "Notifications": "https://www.facebook.com/notifications"
+        }
         
-        st.components.v1.html(html_content, height=600)
+        selected_page = st.selectbox("Select page to view:", options.keys())
         
-        # Quick links
-        st.markdown("### Quick Links")
-        if st.button("📋 View Profile"):
-            st.components.v1.html(
-                f'<iframe src="https://www.facebook.com/me" width="100%" height="600"></iframe>',
-                height=600
-            )
+        if selected_page:
+            url = options[selected_page]
+            content = fetch_facebook_content(st.session_state.parsed_cookies, url)
+            
+            if content:
+                st.markdown('<div class="content-viewer">', unsafe_allow_html=True)
+                st.markdown(f"### Viewing: {selected_page}")
+                st.code(content, language="html")
+                st.markdown('</div>', unsafe_allow_html=True)
+            else:
+                st.error("Unable to fetch content. Please check your cookies and try again.")
 
 if __name__ == "__main__":
     main()
