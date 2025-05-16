@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 from urllib.parse import parse_qs
+import json
 
 # Page configuration
 st.set_page_config(
@@ -48,6 +49,13 @@ st.markdown("""
         border-radius: 4px;
         margin-top: 10px;
     }
+    .cookie-info {
+        background-color: #f8f9fa;
+        padding: 10px;
+        border-radius: 4px;
+        margin-top: 10px;
+        font-size: 0.9em;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -62,8 +70,14 @@ def parse_cookies(cookie_string):
         part = part.strip()
         if '=' in part:
             name, value = part.split('=', 1)
-            cookies[name] = value
+            cookies[name.strip()] = value.strip()
     return cookies
+
+def validate_cookies(cookies):
+    """Validate that required Facebook cookies are present"""
+    required_cookies = ['c_user', 'xs', 'fr']
+    missing_cookies = [cookie for cookie in required_cookies if cookie not in cookies]
+    return len(missing_cookies) == 0, missing_cookies
 
 def fetch_facebook_content(cookies, url):
     """Fetch content from Facebook using requests"""
@@ -73,18 +87,26 @@ def fetch_facebook_content(cookies, url):
         'Accept-Language': 'en-US,en;q=0.5',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0'
     }
     
     try:
-        response = requests.get(url, cookies=cookies, headers=headers, allow_redirects=True)
+        session = requests.Session()
+        response = session.get(url, cookies=cookies, headers=headers, allow_redirects=True)
+        
         return {
             'status_code': response.status_code,
             'url': response.url,
             'headers': dict(response.headers),
             'content_type': response.headers.get('content-type', ''),
-            'is_redirect': len(response.history) > 0
+            'is_redirect': len(response.history) > 0,
+            'history': [{'url': r.url, 'status_code': r.status_code} for r in response.history]
         }
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         return {'error': str(e)}
 
 def main():
@@ -99,13 +121,15 @@ def main():
         1. Enter your Facebook cookies below
         2. Select the content you want to view
         3. Click 'Fetch Content' to retrieve Facebook data
+        
+        **Note:** Make sure to include essential cookies (c_user, xs, fr) for proper authentication.
         """)
         
         # Cookie input
         cookies_input = st.text_area(
             "Enter your Facebook cookies:",
             height=100,
-            help="Paste your Facebook cookies here"
+            help="Paste your Facebook cookies here (including c_user, xs, and fr cookies)"
         )
         
         # Navigation options
@@ -118,30 +142,61 @@ def main():
         
         selected_page = st.selectbox("Select content to view:", options.keys())
         
-        if st.button("Fetch Content", type="primary"):
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            fetch_button = st.button("Fetch Content", type="primary")
+        
+        if fetch_button:
             if cookies_input:
                 parsed_cookies = parse_cookies(cookies_input)
+                valid_cookies, missing_cookies = validate_cookies(parsed_cookies)
                 
-                with st.spinner("Fetching Facebook content..."):
-                    result = fetch_facebook_content(parsed_cookies, options[selected_page])
-                    
-                    st.markdown('<div class="content-container">', unsafe_allow_html=True)
-                    
-                    if 'error' in result:
-                        st.error(f"Error fetching content: {result['error']}")
-                    else:
-                        st.success(f"Successfully connected to Facebook")
-                        st.markdown("### Response Information")
-                        st.markdown('<div class="response-info">', unsafe_allow_html=True)
-                        st.json({
-                            'Status Code': result['status_code'],
-                            'Final URL': result['url'],
-                            'Content Type': result['content_type'],
-                            'Redirected': result['is_redirect']
-                        })
+                if not valid_cookies:
+                    st.error(f"Missing required cookies: {', '.join(missing_cookies)}")
+                else:
+                    with st.spinner("Fetching Facebook content..."):
+                        result = fetch_facebook_content(parsed_cookies, options[selected_page])
+                        
+                        st.markdown('<div class="content-container">', unsafe_allow_html=True)
+                        
+                        if 'error' in result:
+                            st.error(f"Error fetching content: {result['error']}")
+                        else:
+                            if result['status_code'] == 200:
+                                st.success("Successfully connected to Facebook")
+                            else:
+                                st.warning("Connection established but might not be authenticated")
+                            
+                            st.markdown("### Response Information")
+                            st.markdown('<div class="response-info">', unsafe_allow_html=True)
+                            
+                            response_info = {
+                                'Status Code': result['status_code'],
+                                'Final URL': result['url'],
+                                'Content Type': result['content_type'],
+                                'Redirected': result['is_redirect']
+                            }
+                            
+                            if result['is_redirect']:
+                                st.markdown("#### Redirect History")
+                                for hist in result['history']:
+                                    st.markdown(f"- {hist['status_code']}: {hist['url']}")
+                            
+                            st.json(response_info)
+                            st.markdown('</div>', unsafe_allow_html=True)
+                            
+                            # Display cookie information
+                            st.markdown("### Cookie Information")
+                            st.markdown('<div class="cookie-info">', unsafe_allow_html=True)
+                            st.markdown(f"Number of cookies: {len(parsed_cookies)}")
+                            st.markdown("Essential cookies present:")
+                            st.markdown("- c_user: ✅" if 'c_user' in parsed_cookies else "- c_user: ❌")
+                            st.markdown("- xs: ✅" if 'xs' in parsed_cookies else "- xs: ❌")
+                            st.markdown("- fr: ✅" if 'fr' in parsed_cookies else "- fr: ❌")
+                            st.markdown('</div>', unsafe_allow_html=True)
+                        
                         st.markdown('</div>', unsafe_allow_html=True)
-                    
-                    st.markdown('</div>', unsafe_allow_html=True)
             else:
                 st.error("Please enter your Facebook cookies first")
         
