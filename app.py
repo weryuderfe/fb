@@ -1,13 +1,6 @@
 import streamlit as st
 import requests
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from webdriver_manager.chrome import ChromeDriverManager
-from PIL import Image
-import io
-import time
+from urllib.parse import parse_qs
 
 # Page configuration
 st.set_page_config(
@@ -41,11 +34,19 @@ st.markdown("""
         padding: 10px;
         border-radius: 4px;
     }
-    .screenshot-container {
-        margin-top: 20px;
-        padding: 10px;
-        border-radius: 8px;
+    .content-container {
         background-color: white;
+        border-radius: 8px;
+        padding: 20px;
+        margin-top: 20px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    .response-info {
+        font-family: monospace;
+        padding: 10px;
+        background-color: #f8f9fa;
+        border-radius: 4px;
+        margin-top: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -64,45 +65,30 @@ def parse_cookies(cookie_string):
             cookies[name] = value
     return cookies
 
-def setup_driver():
-    """Setup and return a configured Chrome WebDriver"""
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")  # Run in headless mode
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920,1080")
+def fetch_facebook_content(cookies, url):
+    """Fetch content from Facebook using requests"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    }
     
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    return driver
-
-def capture_facebook_page(driver, cookies, url):
-    """Capture a screenshot of the Facebook page"""
     try:
-        # Navigate to Facebook
-        driver.get("https://www.facebook.com")
-        
-        # Add cookies
-        for name, value in cookies.items():
-            driver.add_cookie({
-                'name': name,
-                'value': value,
-                'domain': '.facebook.com'
-            })
-        
-        # Navigate to the specified URL
-        driver.get(url)
-        time.sleep(3)  # Wait for content to load
-        
-        # Take screenshot
-        screenshot = driver.get_screenshot_as_png()
-        return Image.open(io.BytesIO(screenshot))
+        response = requests.get(url, cookies=cookies, headers=headers, allow_redirects=True)
+        return {
+            'status_code': response.status_code,
+            'url': response.url,
+            'headers': dict(response.headers),
+            'content_type': response.headers.get('content-type', ''),
+            'is_redirect': len(response.history) > 0
+        }
     except Exception as e:
-        st.error(f"Error capturing page: {str(e)}")
-        return None
+        return {'error': str(e)}
 
 def main():
-    st.markdown('<h1 class="fb-header">Facebook Viewer with Selenium</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="fb-header">Facebook Content Viewer</h1>', unsafe_allow_html=True)
     
     with st.container():
         st.markdown('<div class="login-container">', unsafe_allow_html=True)
@@ -111,8 +97,8 @@ def main():
         st.markdown("""
         ### How to use:
         1. Enter your Facebook cookies below
-        2. Select a page to view
-        3. Click 'Capture Page' to see the Facebook content
+        2. Select the content you want to view
+        3. Click 'Fetch Content' to retrieve Facebook data
         """)
         
         # Cookie input
@@ -127,26 +113,35 @@ def main():
             "News Feed": "https://www.facebook.com",
             "Profile": "https://www.facebook.com/me",
             "Friends": "https://www.facebook.com/friends",
-            "Messages": "https://www.facebook.com/messages",
-            "Notifications": "https://www.facebook.com/notifications"
+            "Messages": "https://www.facebook.com/messages"
         }
         
-        selected_page = st.selectbox("Select page to view:", options.keys())
+        selected_page = st.selectbox("Select content to view:", options.keys())
         
-        if st.button("Capture Page", type="primary"):
+        if st.button("Fetch Content", type="primary"):
             if cookies_input:
                 parsed_cookies = parse_cookies(cookies_input)
                 
-                with st.spinner("Loading Facebook page..."):
-                    driver = setup_driver()
-                    try:
-                        screenshot = capture_facebook_page(driver, parsed_cookies, options[selected_page])
-                        if screenshot:
-                            st.markdown('<div class="screenshot-container">', unsafe_allow_html=True)
-                            st.image(screenshot, caption=f"Facebook - {selected_page}", use_column_width=True)
-                            st.markdown('</div>', unsafe_allow_html=True)
-                    finally:
-                        driver.quit()
+                with st.spinner("Fetching Facebook content..."):
+                    result = fetch_facebook_content(parsed_cookies, options[selected_page])
+                    
+                    st.markdown('<div class="content-container">', unsafe_allow_html=True)
+                    
+                    if 'error' in result:
+                        st.error(f"Error fetching content: {result['error']}")
+                    else:
+                        st.success(f"Successfully connected to Facebook")
+                        st.markdown("### Response Information")
+                        st.markdown('<div class="response-info">', unsafe_allow_html=True)
+                        st.json({
+                            'Status Code': result['status_code'],
+                            'Final URL': result['url'],
+                            'Content Type': result['content_type'],
+                            'Redirected': result['is_redirect']
+                        })
+                        st.markdown('</div>', unsafe_allow_html=True)
+                    
+                    st.markdown('</div>', unsafe_allow_html=True)
             else:
                 st.error("Please enter your Facebook cookies first")
         
